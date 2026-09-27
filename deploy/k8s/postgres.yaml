@@ -1,0 +1,8 @@
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+spec:
+  type: ExternalName
+  externalName: host.minikube.internal

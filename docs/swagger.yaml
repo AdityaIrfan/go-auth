@@ -1,0 +1,329 @@
+basePath: /
+definitions:
+  docs.HealthResponse:
+    properties:
+      message:
+        example: I'm healthy
+        type: string
+    type: object
+  docs.LoginErrorResponse:
+    properties:
+      message:
+        example: login failed
+        type: string
+      status:
+        example: failed
+        type: string
+      status_code:
+        example: 401
+        type: integer
+    type: object
+  docs.LoginRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: secret123
+        type: string
+    type: object
+  docs.LoginSuccessResponse:
+    properties:
+      data:
+        $ref: '#/definitions/docs.TokenData'
+      message:
+        example: logged in successfully
+        type: string
+      status:
+        example: success
+        type: string
+      status_code:
+        example: 200
+        type: integer
+    type: object
+  docs.LogoutErrorResponse:
+    properties:
+      message:
+        example: logout failed
+        type: string
+      status:
+        example: failed
+        type: string
+      status_code:
+        example: 401
+        type: integer
+    type: object
+  docs.LogoutSuccessResponse:
+    properties:
+      message:
+        example: logged out successfully
+        type: string
+      status:
+        example: success
+        type: string
+      status_code:
+        example: 200
+        type: integer
+    type: object
+  docs.ReadinessErrorResponse:
+    properties:
+      postgres:
+        enum:
+        - up
+        - down
+        example: down
+        type: string
+      redis:
+        enum:
+        - up
+        - down
+        example: up
+        type: string
+    type: object
+  docs.ReadyResponse:
+    properties:
+      message:
+        example: I'm ready
+        type: string
+    type: object
+  docs.RegisterErrorResponse:
+    properties:
+      message:
+        example: register failed
+        type: string
+      status:
+        example: failed
+        type: string
+      status_code:
+        example: 401
+        type: integer
+    type: object
+  docs.RegisterRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      name:
+        example: Jane Doe
+        type: string
+      password:
+        example: secret123
+        minLength: 6
+        type: string
+    type: object
+  docs.RegisterSuccessResponse:
+    properties:
+      message:
+        example: registered successfully
+        type: string
+      status:
+        example: success
+        type: string
+      status_code:
+        example: 201
+        type: integer
+    type: object
+  docs.TokenData:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+      expires_in:
+        example: 86400
+        type: integer
+      token_type:
+        example: Bearer
+        type: string
+    type: object
+  docs.ValidationErrorDetails:
+    properties:
+      email:
+        example: Invalid email format
+        type: string
+      name:
+        example: This field is required
+        type: string
+      password:
+        example: This field is required
+        type: string
+    type: object
+  docs.ValidationErrorResponse:
+    properties:
+      errors:
+        $ref: '#/definitions/docs.ValidationErrorDetails'
+      message:
+        example: invalid request body
+        type: string
+      status:
+        example: failed
+        type: string
+      status_code:
+        example: 400
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: API autentikasi email/password dan Google OAuth2. Semua contoh response
+    mengikuti envelope runtime aplikasi.
+  title: KDA Auth Service API
+  version: "1.0"
+paths:
+  /api/v1/auth/google/callback:
+    get:
+      description: Google mengirim authorization code ke endpoint ini. Backend menukar
+        code menjadi ID token, memverifikasi identitas Google, lalu menerbitkan JWT
+        aplikasi.
+      parameters:
+      - description: Authorization code dari Google
+        in: query
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Login Google berhasil
+          schema:
+            $ref: '#/definitions/docs.LoginSuccessResponse'
+        "401":
+          description: Exchange code, ID token, atau login Google gagal
+          schema:
+            $ref: '#/definitions/docs.LoginErrorResponse'
+      summary: Callback Google OAuth2
+      tags:
+      - Authentication
+  /api/v1/auth/google/login:
+    get:
+      description: Buka endpoint ini langsung melalui browser. Backend membuat URL
+        authorization Google dengan scope openid, email, dan profile.
+      responses:
+        "307":
+          description: Temporary redirect ke halaman login/consent Google
+          headers:
+            Location:
+              description: Google authorization URL
+              type: string
+      summary: Mulai login Google OAuth2
+      tags:
+      - Authentication
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Memverifikasi user provider email dan mengembalikan JWT aplikasi
+        yang disimpan sebagai session Redis.
+      parameters:
+      - description: Login payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/docs.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Login berhasil
+          schema:
+            $ref: '#/definitions/docs.LoginSuccessResponse'
+        "400":
+          description: JSON atau input tidak valid
+          schema:
+            $ref: '#/definitions/docs.ValidationErrorResponse'
+        "401":
+          description: Email/password salah atau login gagal
+          schema:
+            $ref: '#/definitions/docs.LoginErrorResponse'
+      summary: Login dengan email dan password
+      tags:
+      - Authentication
+  /api/v1/auth/logout:
+    post:
+      description: JWT tidak valid ditolak middleware dengan field `error`; kegagalan
+        revocation dikembalikan dengan envelope `logout failed`.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Logout berhasil
+          schema:
+            $ref: '#/definitions/docs.LogoutSuccessResponse'
+        "401":
+          description: Token invalid/expired atau revocation gagal
+          schema:
+            $ref: '#/definitions/docs.LogoutErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Logout dan revoke access token
+      tags:
+      - Authentication
+  /api/v1/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Membuat user provider email. Kegagalan service tidak membocorkan
+        detail internal dan dikembalikan sebagai `register failed`.
+      parameters:
+      - description: Registration payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/docs.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: User berhasil dibuat
+          schema:
+            $ref: '#/definitions/docs.RegisterSuccessResponse'
+        "400":
+          description: JSON atau input tidak valid
+          schema:
+            $ref: '#/definitions/docs.ValidationErrorResponse'
+        "401":
+          description: Registrasi gagal
+          schema:
+            $ref: '#/definitions/docs.RegisterErrorResponse'
+      summary: Register dengan email dan password
+      tags:
+      - Authentication
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/docs.HealthResponse'
+      summary: Liveness check
+      tags:
+      - System
+  /ready:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/docs.ReadyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/docs.ReadinessErrorResponse'
+      summary: Readiness check PostgreSQL dan Redis
+      tags:
+      - System
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: 'Gunakan format: Bearer {access_token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

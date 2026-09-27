@@ -1,0 +1,72 @@
+---
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-service-secret
+type: Opaque
+stringData:
+  DB_HOST: postgres-service
+  DB_USER: kda_user
+  DB_PASSWORD: kda_password
+  DB_NAME: kda_auth_db
+  DB_PORT: "5432"
+  REDIS_HOST: redis-service:6379
+  REDIS_PASSWORD: password
+  JWT_SECRET: e95f314e-74c6-4dfb-9597-c99cb1b14bf0
+  JWT_EXPIRATION_HOURS: "24"
+  GOOGLE_CLIENT_ID: your-google-client-id.apps.googleusercontent.com
+  GOOGLE_CLIENT_SECRET: { google_client_secret }
+  GOOGLE_REDIRECT_URL: { google_redirect_url }
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+  type: NodePort
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: your-registry/auth-service:latest
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - secretRef:
+            name: auth-service-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10

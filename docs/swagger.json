@@ -1,0 +1,477 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "API autentikasi email/password dan Google OAuth2. Semua contoh response mengikuti envelope runtime aplikasi.",
+        "title": "KDA Auth Service API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/v1/auth/google/callback": {
+            "get": {
+                "description": "Google mengirim authorization code ke endpoint ini. Backend menukar code menjadi ID token, memverifikasi identitas Google, lalu menerbitkan JWT aplikasi.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Callback Google OAuth2",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization code dari Google",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Login Google berhasil",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LoginSuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Exchange code, ID token, atau login Google gagal",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LoginErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/google/login": {
+            "get": {
+                "description": "Buka endpoint ini langsung melalui browser. Backend membuat URL authorization Google dengan scope openid, email, dan profile.",
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Mulai login Google OAuth2",
+                "responses": {
+                    "307": {
+                        "description": "Temporary redirect ke halaman login/consent Google",
+                        "headers": {
+                            "Location": {
+                                "type": "string",
+                                "description": "Google authorization URL"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/login": {
+            "post": {
+                "description": "Memverifikasi user provider email dan mengembalikan JWT aplikasi yang disimpan sebagai session Redis.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Login dengan email dan password",
+                "parameters": [
+                    {
+                        "description": "Login payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docs.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Login berhasil",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LoginSuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "JSON atau input tidak valid",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Email/password salah atau login gagal",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LoginErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "JWT tidak valid ditolak middleware dengan field `error`; kegagalan revocation dikembalikan dengan envelope `logout failed`.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Logout dan revoke access token",
+                "responses": {
+                    "200": {
+                        "description": "Logout berhasil",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LogoutSuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Token invalid/expired atau revocation gagal",
+                        "schema": {
+                            "$ref": "#/definitions/docs.LogoutErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/register": {
+            "post": {
+                "description": "Membuat user provider email. Kegagalan service tidak membocorkan detail internal dan dikembalikan sebagai `register failed`.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Register dengan email dan password",
+                "parameters": [
+                    {
+                        "description": "Registration payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docs.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "User berhasil dibuat",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RegisterSuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "JSON atau input tidak valid",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Registrasi gagal",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RegisterErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Liveness check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/docs.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/ready": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Readiness check PostgreSQL dan Redis",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ReadyResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ReadinessErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "docs.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "I'm healthy"
+                }
+            }
+        },
+        "docs.LoginErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "login failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
+        "docs.LoginRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secret123"
+                }
+            }
+        },
+        "docs.LoginSuccessResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/docs.TokenData"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "logged in successfully"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "docs.LogoutErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "logout failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
+        "docs.LogoutSuccessResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "logged out successfully"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "docs.ReadinessErrorResponse": {
+            "type": "object",
+            "properties": {
+                "postgres": {
+                    "type": "string",
+                    "enum": [
+                        "up",
+                        "down"
+                    ],
+                    "example": "down"
+                },
+                "redis": {
+                    "type": "string",
+                    "enum": [
+                        "up",
+                        "down"
+                    ],
+                    "example": "up"
+                }
+            }
+        },
+        "docs.ReadyResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "I'm ready"
+                }
+            }
+        },
+        "docs.RegisterErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "register failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
+        "docs.RegisterRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Jane Doe"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 6,
+                    "example": "secret123"
+                }
+            }
+        },
+        "docs.RegisterSuccessResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "registered successfully"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 201
+                }
+            }
+        },
+        "docs.TokenData": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                },
+                "expires_in": {
+                    "type": "integer",
+                    "example": 86400
+                },
+                "token_type": {
+                    "type": "string",
+                    "example": "Bearer"
+                }
+            }
+        },
+        "docs.ValidationErrorDetails": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "Invalid email format"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "This field is required"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "This field is required"
+                }
+            }
+        },
+        "docs.ValidationErrorResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "$ref": "#/definitions/docs.ValidationErrorDetails"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "invalid request body"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 400
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Gunakan format: Bearer {access_token}",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}
