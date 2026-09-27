@@ -41,9 +41,6 @@ flowchart LR
     AuthService --> TokenPort[Token repository port]
     UserPort --> PostgreSQL
     TokenPort --> Redis
-    Echo --> GoogleAuth[Google authorization endpoint]
-    Echo --> GoogleToken[Google token endpoint]
-    AuthService --> GoogleInfo[Google tokeninfo endpoint]
 ```
 
 Struktur direktori:
