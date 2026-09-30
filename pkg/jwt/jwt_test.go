@@ -17,7 +17,7 @@ func TestGenerateToken(t *testing.T) {
 	}
 
 	claims := new(CustomClaims)
-	token, err := jwtlib.ParseWithClaims(tokenString, claims, func(*jwtlib.Token) (interface{}, error) { return []byte("test-secret"), nil })
+	token, err := jwtlib.ParseWithClaims(tokenString.AccessToken, claims, func(*jwtlib.Token) (interface{}, error) { return []byte("test-secret"), nil })
 	if err != nil || !token.Valid {
 		t.Fatalf("ParseWithClaims() token=%v error=%v", token.Valid, err)
 	}

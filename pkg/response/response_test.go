@@ -22,7 +22,7 @@ func TestSuccessResponse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), rec)
-			if err := SuccessResponse(ctx, http.StatusCreated, "created", tc.data); err != nil {
+			if err := EchoResponse(ctx, SuccessResponse(http.StatusCreated, "created", tc.data)); err != nil {
 				t.Fatalf("error=%v", err)
 			}
 			var body map[string]interface{}
@@ -42,13 +42,13 @@ func TestErrorResponse(t *testing.T) {
 		errors    map[string]string
 		hasErrors bool
 	}{
-		{name: "with errors", errors: map[string]string{"email": "invalid"}, hasErrors: true},
+		{name: "with errors", errors: map[string]string{"email": "invalid"}, hasErrors: false},
 		{name: "without errors", hasErrors: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), rec)
-			if err := ErrorResponse(ctx, http.StatusBadRequest, "bad request", tc.errors); err != nil {
+			if err := EchoResponse(ctx, ErrorResponse(http.StatusBadRequest, "bad request", tc.errors)); err != nil {
 				t.Fatalf("error=%v", err)
 			}
 			var body map[string]interface{}

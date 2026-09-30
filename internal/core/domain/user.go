@@ -35,7 +35,12 @@ type GoogleSSOReq struct {
 }
 
 type TokenResp struct {
-	AccessToken string `json:"access_token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`
-	TokenType   string `json:"token_type" example:"Bearer"`
-	ExpiresIn   int    `json:"expires_in" example:"86400"` // in seconds
+	AccessToken  string `json:"access_token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`
+	RefreshToken string `json:"refresh_token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`
+	TokenType    string `json:"token_type" example:"Bearer"`
+	ExpiresIn    int    `json:"expires_in" example:"86400"` // in seconds
+}
+
+type RefreshTokenReq struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
 }

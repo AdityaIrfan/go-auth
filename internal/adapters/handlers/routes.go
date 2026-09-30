@@ -10,7 +10,7 @@ import (
 	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
-func SetupRoutes(e *echo.Echo, checkHandler *CheckHandler, authHandler *AuthHandler) {
+func SetupRoutes(e *echo.Echo, checkHandler *CheckHandler, authHandler *AuthHandler, eventHandler *EventHandler) {
 	redirectToSwagger := func(c echo.Context) error {
 		return c.Redirect(http.StatusFound, "/swagger/index.html")
 	}
@@ -28,6 +28,7 @@ func SetupRoutes(e *echo.Echo, checkHandler *CheckHandler, authHandler *AuthHand
 	v1.POST("/auth/login", authHandler.Login)
 	v1.GET("/auth/google/login", authHandler.GoogleSSOLogin)
 	v1.GET("/auth/google/callback", authHandler.GoogleSSOCallback)
+	v1.POST("/auth/refresh", authHandler.RefreshToken)
 
 	// Protected Routes (Butuh Token)
 	jwtSecret := os.Getenv("JWT_SECRET")
@@ -35,4 +36,9 @@ func SetupRoutes(e *echo.Echo, checkHandler *CheckHandler, authHandler *AuthHand
 	v1Protected.Use(JWTMiddleware(jwtSecret))
 
 	v1Protected.POST("/auth/logout", authHandler.Logout)
+
+	v1Protected.POST("/events", eventHandler.Create)
+	v1Protected.GET("/events", eventHandler.List)
+	v1Protected.PUT("/events/:id", eventHandler.Update)
+	v1Protected.DELETE("/events/:id", eventHandler.Delete)
 }

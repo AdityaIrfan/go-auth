@@ -8,13 +8,14 @@ import (
 	"kda-auth-service/internal/core/domain"
 	"kda-auth-service/internal/core/ports"
 	"kda-auth-service/pkg/config"
+	jwtPkg "kda-auth-service/pkg/jwt"
 	"kda-auth-service/pkg/response"
 	"kda-auth-service/pkg/utils"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 )
 
@@ -40,20 +41,15 @@ func NewAuthHandler(s ports.AuthService) *AuthHandler {
 func (h *AuthHandler) Register(c echo.Context) error {
 	var req domain.RegisterReq
 	if err := c.Bind(&req); err != nil {
-		return response.ErrorResponse(c, http.StatusBadRequest, "invalid request body", nil)
+		return response.EchoResponseInvalidRequestBody(c, nil)
 	}
 	if err := c.Validate(req); err != nil {
 		errs := utils.FormatValidationError(err)
-		return response.ErrorResponse(c, http.StatusBadRequest, "invalid request body", errs)
+		return response.EchoResponseInvalidRequestBody(c, errs)
 	}
 
-	err := h.service.Register(c.Request().Context(), req)
-	if err != nil {
-		log.Println("REGISTER FAILED: ", err.Error())
-		return response.ErrorResponse(c, http.StatusUnauthorized, "register failed", nil)
-	}
-
-	return response.SuccessResponse(c, http.StatusCreated, "registered successfully", nil)
+	res := h.service.Register(c.Request().Context(), req)
+	return response.EchoResponse(c, res)
 }
 
 // Login godoc
@@ -69,20 +65,15 @@ func (h *AuthHandler) Register(c echo.Context) error {
 func (h *AuthHandler) Login(c echo.Context) error {
 	var req domain.LoginReq
 	if err := c.Bind(&req); err != nil {
-		return response.ErrorResponse(c, http.StatusBadRequest, "invalid request body", nil)
+		return response.EchoResponseInvalidRequestBody(c, nil)
 	}
 	if err := c.Validate(req); err != nil {
 		errs := utils.FormatValidationError(err)
-		return response.ErrorResponse(c, http.StatusBadRequest, "invalid request body", errs)
+		return response.EchoResponseInvalidRequestBody(c, errs)
 	}
 
-	resp, err := h.service.Login(c.Request().Context(), req)
-	if err != nil {
-		log.Println("LOGIN FAILED: ", err.Error())
-		return response.ErrorResponse(c, http.StatusUnauthorized, "login failed", nil)
-	}
-
-	return response.SuccessResponse(c, http.StatusOK, "logged in successfully", resp)
+	res := h.service.Login(c.Request().Context(), req)
+	return response.EchoResponse(c, res)
 }
 
 func (h *AuthHandler) GoogleSSOLogin(c echo.Context) error {
@@ -105,25 +96,20 @@ func generateStateOauthCookie() string {
 func (h *AuthHandler) GoogleSSOCallback(c echo.Context) error {
 	token, err := config.GoogleOauthConfig.Exchange(context.Background(), c.FormValue("code"))
 	if err != nil {
-		fmt.Println("ERROR OAUTH CONFIG EXCHANGE: ", err.Error())
-		return response.ErrorResponse(c, http.StatusUnauthorized, "login failed", nil)
+		log.Error().Msg("ERROR OAUTH CONFIG EXCHANGE: " + err.Error())
+		return response.EchoResponse(c, response.ErrorResponse(http.StatusUnauthorized, "login failed", nil))
 	}
 
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		log.Println("ERROR TOKEN EXTRA: missing id_token in google response")
-		return response.ErrorResponse(c, http.StatusUnauthorized, "login failed", nil)
+		log.Error().Msg("ERROR TOKEN EXTRA: missing id_token in google response")
+		return response.EchoResponse(c, response.ErrorResponse(http.StatusUnauthorized, "login failed", nil))
 	}
 
-	resp, err := h.service.GoogleSSO(c.Request().Context(), domain.GoogleSSOReq{
+	res := h.service.GoogleSSO(c.Request().Context(), domain.GoogleSSOReq{
 		IDToken: idToken,
 	})
-	if err != nil {
-		fmt.Println("ERROR LOGIN OAUTH2: ", err.Error())
-		return response.ErrorResponse(c, http.StatusUnauthorized, "login failed", nil)
-	}
-
-	return response.SuccessResponse(c, http.StatusOK, "logged in successfully", resp)
+	return response.EchoResponse(c, res)
 }
 
 // Logout godoc
@@ -139,11 +125,26 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 	authHeader := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 
-	err := h.service.Logout(c.Request().Context(), token)
-	if err != nil {
-		fmt.Println("ERROR LOGOUT: ", err.Error())
-		return response.ErrorResponse(c, http.StatusUnauthorized, "logout failed", nil)
+	res := h.service.Logout(c.Request().Context(), token)
+	return response.EchoResponse(c, res)
+}
+
+func (h *AuthHandler) RefreshToken(c echo.Context) error {
+	var req domain.RefreshTokenReq
+	if err := c.Bind(&req); err != nil {
+		return response.EchoResponseInvalidRequestBody(c, nil)
+	}
+	if err := c.Validate(req); err != nil {
+		errs := utils.FormatValidationError(err)
+		return response.EchoResponseInvalidRequestBody(c, errs)
 	}
 
-	return response.SuccessResponse(c, http.StatusOK, "logged out successfully", nil)
+	userID, err := jwtPkg.UnpackRefreshToken(req.RefreshToken)
+	if err != nil {
+		log.Error().Msg("ERROR: failed to unpack refresh token")
+		return response.EchoResponse(c, response.ErrorResponse(http.StatusUnprocessableEntity, "refresh token failed", nil))
+	}
+
+	res := h.service.RefreshToken(c.Request().Context(), userID)
+	return response.EchoResponse(c, res)
 }

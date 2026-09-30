@@ -43,7 +43,7 @@ func TestNewCheckHandler(t *testing.T) {
 	e := echo.New()
 	rec := httptest.NewRecorder()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/ready", nil), rec)
-	if err := handler.Ready(ctx); err != nil || rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"redis":"down"`) {
+	if err := handler.Ready(ctx); err != nil || rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"message":"unavailable"`) {
 		t.Fatalf("Ready() code=%d body=%s err=%v", rec.Code, rec.Body.String(), err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -69,9 +69,9 @@ func TestCheckHandlerReady(t *testing.T) {
 		wantBody    string
 	}{
 		{name: "all dependencies up", wantCode: http.StatusOK, wantBody: "I'm ready"},
-		{name: "postgres down", postgresErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"postgres":"down"`},
-		{name: "redis down", redisErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"redis":"down"`},
-		{name: "all dependencies down", postgresErr: errors.New("down"), redisErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"postgres":"down"`},
+		{name: "postgres down", postgresErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"message":"unavailable"`},
+		{name: "redis down", redisErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"message":"unavailable"`},
+		{name: "all dependencies down", postgresErr: errors.New("down"), redisErr: errors.New("down"), wantCode: http.StatusServiceUnavailable, wantBody: `"message":"unavailable"`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

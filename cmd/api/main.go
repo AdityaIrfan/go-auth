@@ -43,8 +43,10 @@ func main() {
 
 	userRepo := repositories.NewPGUserRepository(pgConn)
 	tokenRepo := repositories.NewRedisTokenRepository(redisConn)
+	eventRepo := repositories.NewPGEventRepository(pgConn)
 
 	authService := services.NewAuthService(userRepo, tokenRepo)
+	eventService := services.NewEventService(eventRepo)
 
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
@@ -54,8 +56,9 @@ func main() {
 
 	checkHandler := handlers.NewCheckHandler(pgConn, redisConn)
 	authHandler := handlers.NewAuthHandler(authService)
+	eventHandler := handlers.NewEventHandler(eventService)
 
-	handlers.SetupRoutes(e, checkHandler, authHandler)
+	handlers.SetupRoutes(e, checkHandler, authHandler, eventHandler)
 
 	go func() {
 		port := os.Getenv("PORT")

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"kda-auth-service/pkg/response"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -36,7 +37,7 @@ func NewCheckHandler(db *gorm.DB, rdb *redis.Client) *CheckHandler {
 // @Success 200 {object} HealthSuccessResponse
 // @Router /health [get]
 func (h *CheckHandler) Health(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{"message": "I'm healthy"})
+	return response.EchoResponse(c, response.SuccessResponse(http.StatusOK, "I'm healthy", nil))
 }
 
 // Ready godoc
@@ -65,8 +66,8 @@ func (h *CheckHandler) Ready(c echo.Context) error {
 	}
 
 	if !isReady {
-		return c.JSON(http.StatusServiceUnavailable, status)
+		return response.EchoResponse(c, response.ErrorResponse(http.StatusServiceUnavailable, "unavailable", status))
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "I'm ready"})
+	return response.EchoResponse(c, response.SuccessResponse(http.StatusOK, "I'm ready", nil))
 }

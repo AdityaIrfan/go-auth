@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,9 @@ import (
 
 	"kda-auth-service/internal/core/domain"
 	"kda-auth-service/pkg/config"
+	"kda-auth-service/pkg/response"
+
+	"github.com/google/uuid"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
@@ -25,22 +27,23 @@ type validatorAdapter struct{ validate *validator.Validate }
 func (v validatorAdapter) Validate(value interface{}) error { return v.validate.Struct(value) }
 
 type fakeAuthService struct {
-	registerFn  func(context.Context, domain.RegisterReq) error
-	loginFn     func(context.Context, domain.LoginReq) (*domain.TokenResp, error)
-	googleSSOFn func(context.Context, domain.GoogleSSOReq) (*domain.TokenResp, error)
-	logoutFn    func(context.Context, string) error
+	refreshFn   func(context.Context, uuid.UUID) response.Response
+	registerFn  func(context.Context, domain.RegisterReq) response.Response
+	loginFn     func(context.Context, domain.LoginReq) response.Response
+	googleSSOFn func(context.Context, domain.GoogleSSOReq) response.Response
+	logoutFn    func(context.Context, string) response.Response
 }
 
-func (f *fakeAuthService) Register(ctx context.Context, req domain.RegisterReq) error {
+func (f *fakeAuthService) Register(ctx context.Context, req domain.RegisterReq) response.Response {
 	return f.registerFn(ctx, req)
 }
-func (f *fakeAuthService) Login(ctx context.Context, req domain.LoginReq) (*domain.TokenResp, error) {
+func (f *fakeAuthService) Login(ctx context.Context, req domain.LoginReq) response.Response {
 	return f.loginFn(ctx, req)
 }
-func (f *fakeAuthService) GoogleSSO(ctx context.Context, req domain.GoogleSSOReq) (*domain.TokenResp, error) {
+func (f *fakeAuthService) GoogleSSO(ctx context.Context, req domain.GoogleSSOReq) response.Response {
 	return f.googleSSOFn(ctx, req)
 }
-func (f *fakeAuthService) Logout(ctx context.Context, token string) error {
+func (f *fakeAuthService) Logout(ctx context.Context, token string) response.Response {
 	return f.logoutFn(ctx, token)
 }
 
@@ -65,9 +68,9 @@ func responseBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]inter
 func TestAuthHandlerRegister(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		called := false
-		h := NewAuthHandler(&fakeAuthService{registerFn: func(_ context.Context, req domain.RegisterReq) error {
+		h := NewAuthHandler(&fakeAuthService{registerFn: func(_ context.Context, req domain.RegisterReq) response.Response {
 			called = req.Email == "user@example.com" && req.Name == "Jane"
-			return nil
+			return response.SuccessResponse(201, "register success, do login", nil)
 		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/api/v1/auth/register", `{"email":"user@example.com","password":"secret123","name":"Jane"}`)
 		if err := h.Register(ctx); err != nil || rec.Code != http.StatusCreated || !called {
@@ -93,16 +96,17 @@ func TestAuthHandlerRegister(t *testing.T) {
 			t.Fatalf("code=%d err=%v", rec.Code, err)
 		}
 		body := responseBody(t, rec)
-		errs := body["errors"].(map[string]interface{})
-		if errs["email"] != "Invalid email format" || errs["password"] != "Must be at least 6 characters long" || errs["name"] != "This field is required" {
-			t.Fatalf("unexpected errors: %#v", errs)
+		if body["message"] != "invalid request body" || body["errors"] != nil {
+			t.Fatalf("unexpected response: %#v", body)
 		}
 	})
 
 	t.Run("service error", func(t *testing.T) {
-		h := NewAuthHandler(&fakeAuthService{registerFn: func(context.Context, domain.RegisterReq) error { return errors.New("duplicate") }})
+		h := NewAuthHandler(&fakeAuthService{registerFn: func(context.Context, domain.RegisterReq) response.Response {
+			return response.ErrorResponse(400, "email already registered", nil)
+		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/", `{"email":"user@example.com","password":"secret123","name":"Jane"}`)
-		if err := h.Register(ctx); err != nil || rec.Code != http.StatusUnauthorized || responseBody(t, rec)["message"] != "register failed" {
+		if err := h.Register(ctx); err != nil || rec.Code != 400 || responseBody(t, rec)["message"] != "email already registered" {
 			t.Fatalf("code=%d err=%v", rec.Code, err)
 		}
 	})
@@ -111,8 +115,8 @@ func TestAuthHandlerRegister(t *testing.T) {
 func TestAuthHandlerLogin(t *testing.T) {
 	valid := `{"email":"user@example.com","password":"secret123"}`
 	t.Run("success", func(t *testing.T) {
-		h := NewAuthHandler(&fakeAuthService{loginFn: func(context.Context, domain.LoginReq) (*domain.TokenResp, error) {
-			return &domain.TokenResp{AccessToken: "token", TokenType: "Bearer", ExpiresIn: 3600}, nil
+		h := NewAuthHandler(&fakeAuthService{loginFn: func(context.Context, domain.LoginReq) response.Response {
+			return response.SuccessResponse(200, "login success", &domain.TokenResp{AccessToken: "token", RefreshToken: "refresh", TokenType: "Bearer", ExpiresIn: 3600})
 		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/", valid)
 		if err := h.Login(ctx); err != nil || rec.Code != http.StatusOK {
@@ -139,12 +143,12 @@ func TestAuthHandlerLogin(t *testing.T) {
 		}
 	})
 	t.Run("invalid credentials", func(t *testing.T) {
-		h := NewAuthHandler(&fakeAuthService{loginFn: func(context.Context, domain.LoginReq) (*domain.TokenResp, error) {
-			return nil, errors.New("invalid credentials")
+		h := NewAuthHandler(&fakeAuthService{loginFn: func(context.Context, domain.LoginReq) response.Response {
+			return response.ErrorResponse(401, "invalid credentials", nil)
 		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/", valid)
 		_ = h.Login(ctx)
-		if rec.Code != http.StatusUnauthorized || responseBody(t, rec)["message"] != "login failed" {
+		if rec.Code != http.StatusUnauthorized || responseBody(t, rec)["message"] != "invalid credentials" {
 			t.Fatalf("body=%s", rec.Body.String())
 		}
 	})
@@ -153,7 +157,10 @@ func TestAuthHandlerLogin(t *testing.T) {
 func TestAuthHandlerLogout(t *testing.T) {
 	t.Run("success and strips bearer prefix", func(t *testing.T) {
 		var token string
-		h := NewAuthHandler(&fakeAuthService{logoutFn: func(_ context.Context, got string) error { token = got; return nil }})
+		h := NewAuthHandler(&fakeAuthService{logoutFn: func(_ context.Context, got string) response.Response {
+			token = got
+			return response.SuccessResponse(200, "logout success", nil)
+		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/", "")
 		ctx.Request().Header.Set(echo.HeaderAuthorization, "Bearer abc")
 		_ = h.Logout(ctx)
@@ -162,10 +169,12 @@ func TestAuthHandlerLogout(t *testing.T) {
 		}
 	})
 	t.Run("service failure", func(t *testing.T) {
-		h := NewAuthHandler(&fakeAuthService{logoutFn: func(context.Context, string) error { return errors.New("redis down") }})
+		h := NewAuthHandler(&fakeAuthService{logoutFn: func(context.Context, string) response.Response {
+			return response.ErrorResponse(422, "logout failed", nil)
+		}})
 		ctx, rec := newHandlerContext(http.MethodPost, "/", "")
 		_ = h.Logout(ctx)
-		if rec.Code != http.StatusUnauthorized || responseBody(t, rec)["message"] != "logout failed" {
+		if rec.Code != 422 || responseBody(t, rec)["message"] != "logout failed" {
 			t.Fatalf("body=%s", rec.Body.String())
 		}
 	})
@@ -253,9 +262,9 @@ func TestAuthHandlerGoogleSSOCallback(t *testing.T) {
 		setGoogleOAuthConfig(t)
 		setDefaultHTTPClient(t, http.StatusOK, `{"access_token":"google-access","token_type":"Bearer","id_token":"google-id-token"}`)
 		var receivedIDToken string
-		h := NewAuthHandler(&fakeAuthService{googleSSOFn: func(_ context.Context, req domain.GoogleSSOReq) (*domain.TokenResp, error) {
+		h := NewAuthHandler(&fakeAuthService{googleSSOFn: func(_ context.Context, req domain.GoogleSSOReq) response.Response {
 			receivedIDToken = req.IDToken
-			return &domain.TokenResp{AccessToken: "application-jwt", TokenType: "Bearer", ExpiresIn: 86400}, nil
+			return response.SuccessResponse(200, "login success", &domain.TokenResp{AccessToken: "application-jwt", RefreshToken: "refresh", TokenType: "Bearer", ExpiresIn: 86400})
 		}})
 		ctx, rec := newHandlerContext(http.MethodGet, "/api/v1/auth/google/callback?code=authorization-code", "")
 		_ = h.GoogleSSOCallback(ctx)
@@ -263,7 +272,7 @@ func TestAuthHandlerGoogleSSOCallback(t *testing.T) {
 			t.Fatalf("status=%d id_token=%q body=%s", rec.Code, receivedIDToken, rec.Body.String())
 		}
 		body := responseBody(t, rec)
-		if body["message"] != "logged in successfully" || body["data"].(map[string]interface{})["access_token"] != "application-jwt" {
+		if body["message"] != "login success" || body["data"].(map[string]interface{})["access_token"] != "application-jwt" {
 			t.Fatalf("body=%#v", body)
 		}
 	})
@@ -293,13 +302,17 @@ func TestAuthHandlerGoogleSSOCallback(t *testing.T) {
 	t.Run("service rejects identity", func(t *testing.T) {
 		setGoogleOAuthConfig(t)
 		setDefaultHTTPClient(t, http.StatusOK, `{"access_token":"google-access","token_type":"Bearer","id_token":"google-id-token"}`)
-		h := NewAuthHandler(&fakeAuthService{googleSSOFn: func(context.Context, domain.GoogleSSOReq) (*domain.TokenResp, error) {
-			return nil, errors.New("invalid google id_token")
+		h := NewAuthHandler(&fakeAuthService{googleSSOFn: func(context.Context, domain.GoogleSSOReq) response.Response {
+			return response.ErrorResponse(422, "login failed", nil)
 		}})
 		ctx, rec := newHandlerContext(http.MethodGet, "/api/v1/auth/google/callback?code=authorization-code", "")
 		_ = h.GoogleSSOCallback(ctx)
-		if rec.Code != http.StatusUnauthorized || responseBody(t, rec)["message"] != "login failed" {
+		if rec.Code != 422 || responseBody(t, rec)["message"] != "login failed" {
 			t.Fatalf("body=%s", rec.Body.String())
 		}
 	})
+}
+
+func (f *fakeAuthService) RefreshToken(ctx context.Context, id uuid.UUID) response.Response {
+	return f.refreshFn(ctx, id)
 }

@@ -15,3 +15,5 @@ Output yang harus ikut diperbarui:
 - `docs/swagger.yaml`
 
 Konsistensi ketiga output dan seluruh route/status/example diverifikasi oleh `docs/docs_test.go`.
+
+Jangan memakai `make swagger` untuk kontrak ini: target tersebut masih membaca anotasi runtime lama. Gunakan perintah eksplisit di atas. Dokumentasi mencakup auth, refresh, health/readiness, dan CRUD events; parameter, response envelope, serta batasan binding mengikuti kode saat ini.

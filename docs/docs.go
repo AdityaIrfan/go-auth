@@ -17,18 +17,18 @@ const docTemplate = `{
     "paths": {
         "/api/v1/auth/google/callback": {
             "get": {
-                "description": "Google mengirim authorization code ke endpoint ini. Backend menukar code menjadi ID token, memverifikasi identitas Google, lalu menerbitkan JWT aplikasi.",
+                "description": "Exchanges authorization code for an ID token, checks Google tokeninfo, finds or creates the user by email, and issues application tokens.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Callback Google OAuth2",
+                "summary": "Google OAuth2 callback",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Authorization code dari Google",
+                        "description": "Google authorization code",
                         "name": "code",
                         "in": "query",
                         "required": true
@@ -36,15 +36,27 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Login Google berhasil",
+                        "description": "Token pair",
                         "schema": {
                             "$ref": "#/definitions/docs.LoginSuccessResponse"
                         }
                     },
                     "401": {
-                        "description": "Exchange code, ID token, atau login Google gagal",
+                        "description": "Code exchange failed or ID token missing",
+                        "schema": {
+                            "$ref": "#/definitions/docs.OAuthExchangeErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Tokeninfo, audience, repository, or token persistence failure",
                         "schema": {
                             "$ref": "#/definitions/docs.LoginErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Current tokeninfo missing-claims panic, recovered by application middleware",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RecoveryErrorResponse"
                         }
                     }
                 }
@@ -52,14 +64,17 @@ const docTemplate = `{
         },
         "/api/v1/auth/google/login": {
             "get": {
-                "description": "Buka endpoint ini langsung melalui browser. Backend membuat URL authorization Google dengan scope openid, email, dan profile.",
+                "description": "Open in a browser; redirects with openid, email, profile scopes. Generated state is currently not persisted or validated.",
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Mulai login Google OAuth2",
+                "summary": "Start Google OAuth2 login",
                 "responses": {
                     "307": {
-                        "description": "Temporary redirect ke halaman login/consent Google",
+                        "description": "Temporary redirect to Google",
                         "headers": {
                             "Location": {
                                 "type": "string",
@@ -72,7 +87,7 @@ const docTemplate = `{
         },
         "/api/v1/auth/login": {
             "post": {
-                "description": "Memverifikasi user provider email dan mengembalikan JWT aplikasi yang disimpan sebagai session Redis.",
+                "description": "Returns access and refresh JWTs. Access token is stored in Redis. Refresh lifetime is access lifetime plus one hour.",
                 "consumes": [
                     "application/json"
                 ],
@@ -82,10 +97,10 @@ const docTemplate = `{
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Login dengan email dan password",
+                "summary": "Login email/password",
                 "parameters": [
                     {
-                        "description": "Login payload",
+                        "description": "Request JSON",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -96,19 +111,25 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Login berhasil",
+                        "description": "Token pair",
                         "schema": {
                             "$ref": "#/definitions/docs.LoginSuccessResponse"
                         }
                     },
                     "400": {
-                        "description": "JSON atau input tidak valid",
+                        "description": "Invalid JSON or required fields; errors details are omitted by the current response helper",
                         "schema": {
                             "$ref": "#/definitions/docs.ValidationErrorResponse"
                         }
                     },
                     "401": {
-                        "description": "Email/password salah atau login gagal",
+                        "description": "Invalid credentials or non-email provider",
+                        "schema": {
+                            "$ref": "#/definitions/docs.CredentialErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Token generation or Redis store failure",
                         "schema": {
                             "$ref": "#/definitions/docs.LoginErrorResponse"
                         }
@@ -123,23 +144,29 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "JWT tidak valid ditolak middleware dengan field ` + "`" + `error` + "`" + `; kegagalan revocation dikembalikan dengan envelope ` + "`" + `logout failed` + "`" + `.",
+                "description": "Deletes the supplied access token from Redis. Middleware validates JWT signature/expiry only; it does not consult Redis.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Logout dan revoke access token",
+                "summary": "Revoke access token in Redis",
                 "responses": {
                     "200": {
-                        "description": "Logout berhasil",
+                        "description": "Logged out",
                         "schema": {
                             "$ref": "#/definitions/docs.LogoutSuccessResponse"
                         }
                     },
                     "401": {
-                        "description": "Token invalid/expired atau revocation gagal",
+                        "description": "Missing, invalid, or expired JWT",
+                        "schema": {
+                            "$ref": "#/definitions/docs.JWTErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Redis revoke failed",
                         "schema": {
                             "$ref": "#/definitions/docs.LogoutErrorResponse"
                         }
@@ -147,9 +174,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/auth/register": {
+        "/api/v1/auth/refresh": {
             "post": {
-                "description": "Membuat user provider email. Kegagalan service tidak membocorkan detail internal dan dikembalikan sebagai ` + "`" + `register failed` + "`" + `.",
+                "description": "Public route. Validates the submitted JWT, looks up its user, and returns a new pair. No Redis validation or refresh-token rotation/revocation check is performed. Current verifier does not distinguish access tokens from refresh tokens.",
                 "consumes": [
                     "application/json"
                 ],
@@ -159,10 +186,62 @@ const docTemplate = `{
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Register dengan email dan password",
+                "summary": "Refresh token pair",
                 "parameters": [
                     {
-                        "description": "Registration payload",
+                        "description": "Request JSON",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docs.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Token pair",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RefreshSuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid JSON or required fields; errors details are omitted by the current response helper",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid JWT, database, token generation, or Redis failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RefreshErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Current missing-user panic, recovered by application middleware",
+                        "schema": {
+                            "$ref": "#/definitions/docs.RecoveryErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/register": {
+            "post": {
+                "description": "Requires valid email, password of at least six characters, and name. Duplicate email returns 400 with message email already registered.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Register email/password",
+                "parameters": [
+                    {
+                        "description": "Request JSON",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -173,19 +252,19 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "User berhasil dibuat",
+                        "description": "User created",
                         "schema": {
                             "$ref": "#/definitions/docs.RegisterSuccessResponse"
                         }
                     },
                     "400": {
-                        "description": "JSON atau input tidak valid",
+                        "description": "Invalid input or duplicate email (message: email already registered)",
                         "schema": {
                             "$ref": "#/definitions/docs.ValidationErrorResponse"
                         }
                     },
-                    "401": {
-                        "description": "Registrasi gagal",
+                    "422": {
+                        "description": "Lookup, password hashing, or persistence failure",
                         "schema": {
                             "$ref": "#/definitions/docs.RegisterErrorResponse"
                         }
@@ -193,8 +272,248 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/events": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Optional JSON body filters start_time \u003e= supplied start_time and end_time \u003c= supplied end_time, ordered by start_time ASC. Query parameters are ignored because request fields have no query tags. Empty body returns all user events. GET bodies may not be supported by browser Swagger UI; use curl for filtered requests. No request validation is performed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Events"
+                ],
+                "summary": "List user events",
+                "parameters": [
+                    {
+                        "description": "Request JSON",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ListEventRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Events, empty array when none",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ListEventsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid JSON or required fields; errors details are omitted by the current response helper",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid, or expired JWT",
+                        "schema": {
+                            "$ref": "#/definitions/docs.JWTErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Query failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ListEventsErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "User ID comes from JWT. Title and timestamps are required; end_time must be strictly after start_time. Date-time values use RFC3339.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Events"
+                ],
+                "summary": "Create event",
+                "parameters": [
+                    {
+                        "description": "Request JSON",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docs.EventRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/docs.CreateEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input or end_time must be after start_time",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid, or expired JWT",
+                        "schema": {
+                            "$ref": "#/definitions/docs.JWTErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Persistence failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.CreateEventErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/events/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Only the JWT owner can update. Title and both times are required. Unlike create, equal start_time and end_time are currently accepted. Lookup errors all return 404.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Events"
+                ],
+                "summary": "Replace event fields",
+                "parameters": [
+                    {
+                        "description": "Request JSON",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docs.EventRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Event UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "schema": {
+                            "$ref": "#/definitions/docs.UpdateEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid event id, invalid input, or end_time must be after start_time",
+                        "schema": {
+                            "$ref": "#/definitions/docs.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid, or expired JWT",
+                        "schema": {
+                            "$ref": "#/definitions/docs.JWTErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found for this user or lookup failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.EventNotFoundResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Persistence failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.UpdateEventErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Only the JWT owner can delete. Lookup errors all return 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Events"
+                ],
+                "summary": "Delete event",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Event UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deleted",
+                        "schema": {
+                            "$ref": "#/definitions/docs.DeleteEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid event UUID",
+                        "schema": {
+                            "$ref": "#/definitions/docs.EventIDErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid, or expired JWT",
+                        "schema": {
+                            "$ref": "#/definitions/docs.JWTErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found for this user or lookup failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.EventNotFoundResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Delete failure",
+                        "schema": {
+                            "$ref": "#/definitions/docs.DeleteEventErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
+                "description": "Returns the standard success envelope.",
                 "produces": [
                     "application/json"
                 ],
@@ -204,7 +523,7 @@ const docTemplate = `{
                 "summary": "Liveness check",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Healthy",
                         "schema": {
                             "$ref": "#/definitions/docs.HealthResponse"
                         }
@@ -214,22 +533,23 @@ const docTemplate = `{
         },
         "/ready": {
             "get": {
+                "description": "Pings PostgreSQL and Redis. Dependency details are currently discarded by the response helper.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "System"
                 ],
-                "summary": "Readiness check PostgreSQL dan Redis",
+                "summary": "Readiness check",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Ready",
                         "schema": {
                             "$ref": "#/definitions/docs.ReadyResponse"
                         }
                     },
                     "503": {
-                        "description": "Service Unavailable",
+                        "description": "One or both dependencies unavailable",
                         "schema": {
                             "$ref": "#/definitions/docs.ReadinessErrorResponse"
                         }
@@ -239,12 +559,285 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "docs.CreateEventErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "create event failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "docs.CreateEventResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/docs.Event"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "create event success"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 201
+                }
+            }
+        },
+        "docs.CredentialErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "invalid credentials"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
+        "docs.DeleteEventErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "delete event failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "docs.DeleteEventResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "delete event success"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "docs.Event": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-09-30T08:00:00Z"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Weekly planning"
+                },
+                "end_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T10:00:00+07:00"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "c27096d8-58d1-4014-9830-96f36ab04c9f"
+                },
+                "start_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T09:00:00+07:00"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "Team meeting"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-09-30T08:00:00Z"
+                },
+                "user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "c8721202-510d-4a9a-b1d5-30b78c01d73b"
+                }
+            }
+        },
+        "docs.EventIDErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "invalid event id"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 400
+                }
+            }
+        },
+        "docs.EventNotFoundResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "event not found"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 404
+                }
+            }
+        },
+        "docs.EventRequest": {
+            "type": "object",
+            "required": [
+                "end_time",
+                "start_time",
+                "title"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Weekly planning"
+                },
+                "end_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T10:00:00+07:00"
+                },
+                "start_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T09:00:00+07:00"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "Team meeting"
+                }
+            }
+        },
         "docs.HealthResponse": {
             "type": "object",
             "properties": {
                 "message": {
                     "type": "string",
                     "example": "I'm healthy"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "docs.JWTErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "invalid or expired token"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
+        "docs.ListEventRequest": {
+            "type": "object",
+            "properties": {
+                "end_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-02T00:00:00+07:00"
+                },
+                "start_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T00:00:00+07:00"
+                }
+            }
+        },
+        "docs.ListEventsErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "list events failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "docs.ListEventsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/docs.Event"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "list events success"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
                 }
             }
         },
@@ -261,15 +854,20 @@ const docTemplate = `{
                 },
                 "status_code": {
                     "type": "integer",
-                    "example": 401
+                    "example": 422
                 }
             }
         },
         "docs.LoginRequest": {
             "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
+                    "format": "email",
                     "example": "user@example.com"
                 },
                 "password": {
@@ -286,7 +884,7 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string",
-                    "example": "logged in successfully"
+                    "example": "login success"
                 },
                 "status": {
                     "type": "string",
@@ -311,7 +909,7 @@ const docTemplate = `{
                 },
                 "status_code": {
                     "type": "integer",
-                    "example": 401
+                    "example": 422
                 }
             }
         },
@@ -320,7 +918,7 @@ const docTemplate = `{
             "properties": {
                 "message": {
                     "type": "string",
-                    "example": "logged out successfully"
+                    "example": "logout success"
                 },
                 "status": {
                     "type": "string",
@@ -332,24 +930,37 @@ const docTemplate = `{
                 }
             }
         },
+        "docs.OAuthExchangeErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "login failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 401
+                }
+            }
+        },
         "docs.ReadinessErrorResponse": {
             "type": "object",
             "properties": {
-                "postgres": {
+                "message": {
                     "type": "string",
-                    "enum": [
-                        "up",
-                        "down"
-                    ],
-                    "example": "down"
+                    "example": "unavailable"
                 },
-                "redis": {
+                "status": {
                     "type": "string",
-                    "enum": [
-                        "up",
-                        "down"
-                    ],
-                    "example": "up"
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 503
                 }
             }
         },
@@ -359,6 +970,72 @@ const docTemplate = `{
                 "message": {
                     "type": "string",
                     "example": "I'm ready"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "docs.RecoveryErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Internal Server Error"
+                }
+            }
+        },
+        "docs.RefreshErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "refresh token failed"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "docs.RefreshRequest": {
+            "type": "object",
+            "required": [
+                "refresh_token"
+            ],
+            "properties": {
+                "refresh_token": {
+                    "type": "string",
+                    "example": "\u003crefresh-jwt\u003e"
+                }
+            }
+        },
+        "docs.RefreshSuccessResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/docs.TokenData"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "refresh token success"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
                 }
             }
         },
@@ -375,15 +1052,21 @@ const docTemplate = `{
                 },
                 "status_code": {
                     "type": "integer",
-                    "example": 401
+                    "example": 422
                 }
             }
         },
         "docs.RegisterRequest": {
             "type": "object",
+            "required": [
+                "email",
+                "name",
+                "password"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
+                    "format": "email",
                     "example": "user@example.com"
                 },
                 "name": {
@@ -402,7 +1085,7 @@ const docTemplate = `{
             "properties": {
                 "message": {
                     "type": "string",
-                    "example": "registered successfully"
+                    "example": "register success, do login"
                 },
                 "status": {
                     "type": "string",
@@ -419,11 +1102,15 @@ const docTemplate = `{
             "properties": {
                 "access_token": {
                     "type": "string",
-                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    "example": "\u003caccess-jwt\u003e"
                 },
                 "expires_in": {
                     "type": "integer",
                     "example": 86400
+                },
+                "refresh_token": {
+                    "type": "string",
+                    "example": "\u003crefresh-jwt\u003e"
                 },
                 "token_type": {
                     "type": "string",
@@ -431,29 +1118,46 @@ const docTemplate = `{
                 }
             }
         },
-        "docs.ValidationErrorDetails": {
+        "docs.UpdateEventErrorResponse": {
             "type": "object",
             "properties": {
-                "email": {
+                "message": {
                     "type": "string",
-                    "example": "Invalid email format"
+                    "example": "update event failed"
                 },
-                "name": {
+                "status": {
                     "type": "string",
-                    "example": "This field is required"
+                    "example": "failed"
                 },
-                "password": {
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "docs.UpdateEventResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/docs.Event"
+                },
+                "message": {
                     "type": "string",
-                    "example": "This field is required"
+                    "example": "update event success"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
                 }
             }
         },
         "docs.ValidationErrorResponse": {
             "type": "object",
             "properties": {
-                "errors": {
-                    "$ref": "#/definitions/docs.ValidationErrorDetails"
-                },
                 "message": {
                     "type": "string",
                     "example": "invalid request body"
@@ -471,7 +1175,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Gunakan format: Bearer {access_token}",
+            "description": "Bearer {access_token}",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
@@ -485,8 +1189,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
-	Title:            "KDA Auth Service API",
-	Description:      "API autentikasi email/password dan Google OAuth2. Semua contoh response mengikuti envelope runtime aplikasi.",
+	Title:            "KDA Auth and Calendar Service API",
+	Description:      "Authentication, refresh tokens, and user-owned calendar events. Responses mirror the current runtime, including its documented limitations.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

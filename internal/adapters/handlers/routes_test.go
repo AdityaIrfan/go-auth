@@ -11,7 +11,7 @@ import (
 
 func TestDocumentationRoutes(t *testing.T) {
 	e := echo.New()
-	SetupRoutes(e, &CheckHandler{}, NewAuthHandler(&fakeAuthService{}))
+	SetupRoutes(e, &CheckHandler{}, NewAuthHandler(&fakeAuthService{}), NewEventHandler(nil))
 
 	tests := []struct {
 		path     string
@@ -34,9 +34,14 @@ func TestDocumentationRoutes(t *testing.T) {
 
 func TestSetupRoutesRegistersEveryAPIEndpoint(t *testing.T) {
 	e := echo.New()
-	SetupRoutes(e, &CheckHandler{}, NewAuthHandler(&fakeAuthService{}))
+	SetupRoutes(e, &CheckHandler{}, NewAuthHandler(&fakeAuthService{}), NewEventHandler(nil))
 
 	want := map[string]bool{
+		"POST /api/v1/auth/refresh":                      false,
+		"POST /api/v1/events":                            false,
+		"GET /api/v1/events":                             false,
+		"PUT /api/v1/events/:id":                         false,
+		"DELETE /api/v1/events/:id":                      false,
 		http.MethodGet + " /health":                      false,
 		http.MethodGet + " /ready":                       false,
 		http.MethodPost + " /api/v1/auth/register":       false,
